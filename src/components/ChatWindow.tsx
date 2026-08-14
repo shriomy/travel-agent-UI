@@ -205,6 +205,16 @@ export default function ChatWindow({
     const assistantMsgId = `assistant-${Date.now()}-${Math.random()}`;
     const now = new Date().toISOString();
 
+    const pickedLabels = selectedIds
+      .map((id) => interruptData.options.find((o) => o.id === id)?.label ?? id)
+      .join(', ');
+    const summary =
+      interruptData.kind === 'confirmation'
+        ? `Chose: ${pickedLabels || 'none'}`
+        : selectedIds.length === 0
+          ? "Skipped — didn't pick any of the options"
+          : `Picked: ${pickedLabels}`;
+
     // Replace the interrupt with a tool message showing the selection,
     // then add a new assistant placeholder for the resumed stream
     updateMessages((prev) => [
@@ -213,7 +223,7 @@ export default function ChatWindow({
         id: `tool-${Date.now()}`,
         conversation_id: threadId,
         role: 'tool',
-        content: `Selected ${selectedIds.length} option(s): ${selectedIds.join(', ')}`,
+        content: summary,
         interrupt_data: null,
         created_at: now,
       },
