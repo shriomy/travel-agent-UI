@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, type Dispatch, type SetStateAction } from 'react';
 import type { ChatMessage, Conversation, InterruptData } from '@/lib/types';
 import { sendMessage, resumeInterrupt } from '@/lib/apiClient';
 import {
@@ -14,7 +14,13 @@ interface ChatWindowProps {
   conversation: Conversation | null;
   userId: string;
   messages: ChatMessage[];
-  onMessagesChange: (messages: ChatMessage[]) => void;
+  // A real state setter (React's Dispatch), not a plain callback — every update
+  // in this component must be computed against the LATEST state, not the
+  // `messages` prop snapshot from when this component last rendered. A single
+  // streamed turn calls this many times in a row (once per SSE event), and with
+  // a plain (messages: ChatMessage[]) => void callback each call would recompute
+  // from the same stale array, silently discarding every update but the last.
+  onMessagesChange: Dispatch<SetStateAction<ChatMessage[]>>;
   onConversationMetaUpdate: (id: string, title: string, preview: string) => void;
 }
 
@@ -38,8 +44,10 @@ export default function ChatWindow({
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
+  // Forwards the updater function itself to React's setState, so it always
+  // runs against the true latest state rather than a snapshot from render time.
   const updateMessages = (updater: (prev: ChatMessage[]) => ChatMessage[]) => {
-    onMessagesChange(updater(messages));
+    onMessagesChange(updater);
   };
 
   const processStream = async (
@@ -76,21 +84,26 @@ export default function ChatWindow({
           );
           break;
 
-        case 'tool':
+        case 'tool': {
           toolContent = event.content ?? '';
-          updateMessages((prev) => [
-            ...prev.slice(0, -1),
-            {
-              id: `tool-${Date.now()}-${Math.random()}`,
-              conversation_id: threadId,
-              role: 'tool',
-              content: toolContent,
-              interrupt_data: null,
-              created_at: new Date().toISOString(),
-            },
-            prev[prev.length - 1],
-          ]);
+          const toolMessage: ChatMessage = {
+            id: `tool-${Date.now()}-${Math.random()}`,
+            conversation_id: threadId,
+            role: 'tool',
+            content: toolContent,
+            interrupt_data: null,
+            created_at: new Date().toISOString(),
+          };
+          // Insert right before the assistant placeholder by id, not by
+          // position — assuming "the last message" is always the placeholder
+          // breaks the moment anything else can append to the array mid-stream.
+          updateMessages((prev) => {
+            const index = prev.findIndex((m) => m.id === assistantMsgId);
+            if (index === -1) return [...prev, toolMessage];
+            return [...prev.slice(0, index), toolMessage, ...prev.slice(index)];
+          });
           break;
+        }
 
         case 'interrupt':
           interruptData = event.data ?? null;
@@ -165,22 +178,15 @@ export default function ChatWindow({
 
     try {
       const stream = sendMessage({ message: messageText, thread_id: threadId, user_id: userId });
-      const interruptData = await processStream(stream, assistantMsgId, threadId);
+      await processStream(stream, assistantMsgId, threadId);
 
-      // Update preview with assistant response
-      const lastMsg = messages[messages.length - 1];
-      if (lastMsg) {
-        const preview = derivePreview(messageText);
-        await updateConversationPreview(threadId, conversation.title, preview);
-      }
+      const preview = derivePreview(messageText);
+      await updateConversationPreview(threadId, conversation.title, preview);
 
-      // If there's an interrupt, we wait for the user to pick — handleResume handles the loop
-      if (!interruptData) {
-        setIsStreaming(false);
-      } else {
-        // Streaming pauses for interrupt; resume will set isStreaming again
-        setIsStreaming(false);
-      }
+      // Either way the turn has stopped streaming: on a plain answer it's
+      // finished, and on an interrupt the picker takes over — handleResume
+      // starts streaming again when the user answers it.
+      setIsStreaming(false);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Something went wrong';
       updateMessages((prev) =>
@@ -215,27 +221,34 @@ export default function ChatWindow({
           ? "Skipped — didn't pick any of the options"
           : `Picked: ${pickedLabels}`;
 
-    // Replace the interrupt with a tool message showing the selection,
-    // then add a new assistant placeholder for the resumed stream
-    updateMessages((prev) => [
-      ...prev.slice(0, -1),
-      {
-        id: `tool-${Date.now()}`,
-        conversation_id: threadId,
-        role: 'tool',
-        content: summary,
-        interrupt_data: null,
-        created_at: now,
-      },
-      {
-        id: assistantMsgId,
-        conversation_id: threadId,
-        role: 'assistant',
-        content: '',
-        interrupt_data: null,
-        created_at: new Date().toISOString(),
-      },
-    ]);
+    // Replace the interrupted message with a tool summary of the pick, then add
+    // a new assistant placeholder for the resumed stream. Matched by id, not
+    // position — the interrupted message is wherever it is, not necessarily last.
+    updateMessages((prev) => {
+      const withoutInterrupt = prev.map((m) =>
+        m.id === lastMessage.id
+          ? {
+              id: `tool-${Date.now()}`,
+              conversation_id: threadId,
+              role: 'tool' as const,
+              content: summary,
+              interrupt_data: null,
+              created_at: now,
+            }
+          : m,
+      );
+      return [
+        ...withoutInterrupt,
+        {
+          id: assistantMsgId,
+          conversation_id: threadId,
+          role: 'assistant' as const,
+          content: '',
+          interrupt_data: null,
+          created_at: new Date().toISOString(),
+        },
+      ];
+    });
 
     setIsStreaming(true);
 
