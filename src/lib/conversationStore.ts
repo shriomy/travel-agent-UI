@@ -1,11 +1,19 @@
 import { supabase } from './supabaseClient';
 import type { Conversation, ChatMessage } from './types';
 
+/**
+ * Direct Supabase reads for the sidebar and thread reload.
+ *
+ * Table names are prefixed `agent_` and are protected by RLS scoped to
+ * auth.uid(), so the anon client here can only ever see the signed-in user's own
+ * rows. The backend writes the same tables with the service role key.
+ */
+
 // --- Conversations ----------------------------------------------------------
 
 export async function fetchConversations(userId: string): Promise<Conversation[]> {
   const { data, error } = await supabase
-    .from('conversations')
+    .from('agent_conversations')
     .select('id, user_id, title, preview, created_at, updated_at')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false });
@@ -20,7 +28,7 @@ export async function createConversation(
   title = 'New conversation',
 ): Promise<Conversation> {
   const { data, error } = await supabase
-    .from('conversations')
+    .from('agent_conversations')
     .insert({
       id: conversationId,
       user_id: userId,
@@ -40,7 +48,7 @@ export async function updateConversationPreview(
   preview: string,
 ): Promise<void> {
   const { error } = await supabase
-    .from('conversations')
+    .from('agent_conversations')
     .update({ title, preview, updated_at: new Date().toISOString() })
     .eq('id', conversationId);
 
@@ -49,7 +57,7 @@ export async function updateConversationPreview(
 
 export async function deleteConversation(conversationId: string): Promise<void> {
   const { error } = await supabase
-    .from('conversations')
+    .from('agent_conversations')
     .delete()
     .eq('id', conversationId);
 
@@ -60,7 +68,7 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 
 export async function fetchMessages(conversationId: string): Promise<ChatMessage[]> {
   const { data, error } = await supabase
-    .from('messages')
+    .from('agent_messages')
     .select('id, conversation_id, role, content, interrupt_data, created_at')
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: true });
@@ -72,7 +80,7 @@ export async function fetchMessages(conversationId: string): Promise<ChatMessage
 export async function saveMessage(
   msg: Omit<ChatMessage, 'id' | 'created_at'>,
 ): Promise<void> {
-  const { error } = await supabase.from('messages').insert(msg);
+  const { error } = await supabase.from('agent_messages').insert(msg);
   if (error) throw error;
 }
 

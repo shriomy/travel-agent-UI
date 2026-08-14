@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage, Conversation, InterruptData } from '@/lib/types';
 import { sendMessage, resumeInterrupt } from '@/lib/apiClient';
 import {
-  saveMessage,
   updateConversationPreview,
   deriveTitle,
   derivePreview,
@@ -44,7 +43,13 @@ export default function ChatWindow({
   };
 
   const processStream = async (
-    stream: AsyncGenerator<{ type: string; content?: string; data?: InterruptData; message?: string }>,
+    stream: AsyncGenerator<{
+      type: string;
+      content?: string;
+      data?: InterruptData;
+      message?: string;
+      thread_id?: string;
+    }>,
     assistantMsgId: string,
     threadId: string,
   ): Promise<InterruptData | null> => {
@@ -54,6 +59,12 @@ export default function ChatWindow({
 
     for await (const event of stream) {
       switch (event.type) {
+        // The backend confirms which thread the turn ran on. For an existing
+        // conversation this matches what we sent; it matters when the backend
+        // mints a new thread id.
+        case 'thread':
+          break;
+
         case 'text':
           fullContent += event.content ?? '';
           updateMessages((prev) =>
@@ -108,16 +119,9 @@ export default function ChatWindow({
       }
     }
 
-    // Save the assistant message to the database
-    if (fullContent || interruptData) {
-      await saveMessage({
-        conversation_id: threadId,
-        role: 'assistant',
-        content: fullContent,
-        interrupt_data: interruptData,
-      });
-    }
-
+    // The backend records both sides of the exchange in agent_messages as it
+    // runs, so there is nothing to persist from here — writing it again would
+    // duplicate every message in the thread on reload.
     return interruptData;
   };
 
@@ -150,14 +154,6 @@ export default function ChatWindow({
     updateMessages((prev) => [...prev, userMessage, assistantPlaceholder]);
     setInput('');
     setIsStreaming(true);
-
-    // Save user message
-    await saveMessage({
-      conversation_id: threadId,
-      role: 'user',
-      content: messageText,
-      interrupt_data: null,
-    });
 
     // Update conversation title/preview on first message
     if (messages.length === 0) {
@@ -236,7 +232,6 @@ export default function ChatWindow({
     try {
       const stream = resumeInterrupt({
         thread_id: threadId,
-        user_id: userId,
         selection_id: interruptData.selection_id,
         selected_options: selectedIds,
       });

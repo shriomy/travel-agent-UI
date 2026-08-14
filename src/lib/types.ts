@@ -6,10 +6,21 @@ export interface InterruptOption {
   description?: string;
 }
 
+export type SelectionKind =
+  | 'destination'
+  | 'place'
+  | 'event'
+  | 'accommodation'
+  | 'confirmation';
+
 export interface InterruptData {
   reason: string;
   options: InterruptOption[];
   selection_id: string;
+  /** What is being chosen, so the picker can label itself appropriately. */
+  kind?: SelectionKind;
+  /** The destination these options belong to, when there is one. */
+  destination?: string | null;
 }
 
 export interface ChatMessage {
@@ -32,18 +43,22 @@ export interface Conversation {
 
 export interface SendMessageRequest {
   message: string;
-  thread_id: string;
-  user_id: string;
+  /** Omit to have the backend mint a new thread and return it in a `thread` event. */
+  thread_id?: string;
+  user_id?: string;
 }
 
 export interface ResumeInterruptRequest {
   thread_id: string;
-  user_id: string;
   selection_id: string;
+  /** Option ids the user picked. An empty array means they picked none. */
   selected_options: string[];
+  user_id?: string;
 }
 
 export type StreamEvent =
+  /** Sent first on /chat/send so a brand-new thread can be tracked immediately. */
+  | { type: 'thread'; thread_id: string }
   | { type: 'text'; content: string }
   | { type: 'tool'; content: string }
   | { type: 'interrupt'; data: InterruptData }
