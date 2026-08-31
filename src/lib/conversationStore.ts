@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient';
-import type { Conversation, ChatMessage } from './types';
+import type { Conversation, ChatMessage, UsageBreakdown } from './types';
 
 /**
  * Direct Supabase reads for the sidebar and thread reload.
@@ -74,7 +74,48 @@ export async function fetchMessages(conversationId: string): Promise<ChatMessage
     .order('created_at', { ascending: true });
 
   if (error) throw error;
-  return data ?? [];
+  const messages: ChatMessage[] = data ?? [];
+
+  const usageByMessageId = await fetchUsageByMessageId(conversationId);
+  if (usageByMessageId.size === 0) return messages;
+
+  return messages.map((m) => {
+    const usage = usageByMessageId.get(m.id);
+    return usage ? { ...m, usage } : m;
+  });
+}
+
+/** Token/cost breakdowns for a conversation's messages, keyed by message id.
+ * Best-effort: a read failure here should not break loading the transcript
+ * itself, so it logs and returns an empty map rather than throwing. */
+async function fetchUsageByMessageId(conversationId: string): Promise<Map<string, UsageBreakdown>> {
+  const { data, error } = await supabase
+    .from('agent_message_usage')
+    .select(
+      'message_id, model, context_tokens, memory_tokens, system_prompt_tokens, tools_tokens, other_tokens, total_tokens, cost_usd',
+    )
+    .eq('conversation_id', conversationId);
+
+  if (error) {
+    console.error('Failed to load usage breakdown:', error);
+    return new Map();
+  }
+
+  const map = new Map<string, UsageBreakdown>();
+  for (const row of data ?? []) {
+    if (!row.message_id) continue;
+    map.set(row.message_id, {
+      context_tokens: row.context_tokens,
+      memory_tokens: row.memory_tokens,
+      system_prompt_tokens: row.system_prompt_tokens,
+      tools_tokens: row.tools_tokens,
+      other_tokens: row.other_tokens,
+      total_tokens: row.total_tokens,
+      cost_usd: row.cost_usd,
+      model: row.model,
+    });
+  }
+  return map;
 }
 
 export async function saveMessage(
