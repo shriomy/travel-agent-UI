@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, type Dispatch, type SetStateAction } from 'react';
-import type { ChatMessage, Conversation, InterruptData } from '@/lib/types';
+import type { ChatMessage, Conversation, InterruptData, UsageBreakdown } from '@/lib/types';
 import { sendMessage, resumeInterrupt } from '@/lib/apiClient';
 import {
   updateConversationPreview,
@@ -54,7 +54,7 @@ export default function ChatWindow({
     stream: AsyncGenerator<{
       type: string;
       content?: string;
-      data?: InterruptData;
+      data?: InterruptData | UsageBreakdown;
       message?: string;
       thread_id?: string;
     }>,
@@ -106,7 +106,7 @@ export default function ChatWindow({
         }
 
         case 'interrupt':
-          interruptData = event.data ?? null;
+          interruptData = (event.data as InterruptData) ?? null;
           if (interruptData) {
             updateMessages((prev) =>
               prev.map((m) =>
@@ -117,6 +117,16 @@ export default function ChatWindow({
             );
           }
           break;
+
+        case 'usage': {
+          const usage = event.data as UsageBreakdown | undefined;
+          if (usage) {
+            updateMessages((prev) =>
+              prev.map((m) => (m.id === assistantMsgId ? { ...m, usage } : m)),
+            );
+          }
+          break;
+        }
 
         case 'error':
           fullContent += `\n\n**Error:** ${event.message}`;

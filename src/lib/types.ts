@@ -23,6 +23,28 @@ export interface InterruptData {
   destination?: string | null;
 }
 
+/**
+ * Per-message token/cost breakdown, streamed by the backend right after a
+ * `text`/`interrupt` event and persisted in `agent_message_usage`.
+ *
+ * Only 5 buckets exist: context, memory, system_prompt and tools describe
+ * what went into the main agent call's prompt; `other` is everything else —
+ * the guardrail/classifier calls (scope, request-split, preference
+ * extraction, smalltalk, summarization) AND the agent's own generated reply
+ * tokens, since there is no separate "generation" bucket. `cost_usd` is only
+ * ever a real number for a model with known pricing — never a guess.
+ */
+export interface UsageBreakdown {
+  context_tokens: number;
+  memory_tokens: number;
+  system_prompt_tokens: number;
+  tools_tokens: number;
+  other_tokens: number;
+  total_tokens: number;
+  cost_usd: number | null;
+  model: string | null;
+}
+
 export interface ChatMessage {
   id: string;
   conversation_id: string;
@@ -30,6 +52,7 @@ export interface ChatMessage {
   content: string;
   interrupt_data: InterruptData | null;
   created_at: string;
+  usage?: UsageBreakdown | null;
 }
 
 export interface Conversation {
@@ -62,5 +85,6 @@ export type StreamEvent =
   | { type: 'text'; content: string }
   | { type: 'tool'; content: string }
   | { type: 'interrupt'; data: InterruptData }
+  | { type: 'usage'; data: UsageBreakdown }
   | { type: 'done' }
   | { type: 'error'; message: string };
